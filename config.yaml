@@ -1,0 +1,42 @@
+project:
+  name: "Adaptive Variable Resolution 2.5D Lidar Mapping"
+  organization: "DRDO - Department of Defence Production / IDEX"
+
+model:
+  backend: "torch"                 # torch or tf
+  name: "RandLANet"                # RandLANet or KPFCNN (KPConv) -- both pretrained on SemanticKITTI
+  dataset_for_pretrain: "SemanticKITTI"
+  checkpoint_path: "checkpoints/randlanet_semantickitti_202201071330utc.pth"
+  num_classes: 19                  # native SemanticKITTI class count (remapped to 3 super-classes downstream)
+  device: "cuda"                   # cuda or cpu
+
+grid:
+  # Foveated / variable-resolution ring definition. Each ring owns its own
+  # cell size, so the grid gets coarser with distance without ever needing
+  # to interpolate or re-align between resolutions.
+  rings:
+    - {name: "near",  r_min: 0.0,  r_max: 10.0,  cell_size: 0.05}
+    - {name: "mid",   r_min: 10.0, r_max: 30.0,  cell_size: 0.20}
+    - {name: "far",   r_min: 30.0, r_max: 60.0,  cell_size: 0.35}
+    - {name: "edge",  r_min: 60.0, r_max: 100.0, cell_size: 0.50}
+  ego_origin: [0.0, 0.0]
+  z_clip: [-3.0, 3.0]              # discard points far above/below sensor height (roof returns, ground noise)
+
+paths:
+  inference_input_dir: "data/inference_frames"   # put .bin / .npy lidar frames here
+  finetune_data_dir: "data/finetune_dataset"      # auto-populated by dataset_utils.py
+  output_dir: "outputs"
+  gt_label_dir: ""                 # optional: folder of .label files, enables live mIoU
+
+training:
+  epochs: 40
+  batch_size: 4
+  learning_rate: 0.0005
+  freeze_backbone_layers: 0        # 0 = fine-tune every layer; >0 freezes the first N parameter tensors
+  val_split: 0.15
+  save_every: 5
+
+visualization:
+  window_name: "Adaptive 2.5D Lidar Map - DRDO"
+  image_size: [900, 900]
+  fps_overlay: true
