@@ -1,0 +1,53 @@
+project:
+  name: Adaptive Variable Resolution 2.5D Lidar Mapping
+  organization: DRDO - Department of Defence Production / IDEX
+model:
+  backend: torch
+  name: RandLANet
+  dataset_for_pretrain: SemanticKITTI
+  checkpoint_path: checkpoints/finetuned_ckpt_00040.pth
+  num_classes: 19
+  in_channels: 3
+  device: cuda
+grid:
+  rings:
+  - name: near
+    r_min: 0.0
+    r_max: 10.0
+    cell_size: 0.05
+  - name: mid
+    r_min: 10.0
+    r_max: 30.0
+    cell_size: 0.2
+  - name: far
+    r_min: 30.0
+    r_max: 60.0
+    cell_size: 0.35
+  - name: edge
+    r_min: 60.0
+    r_max: 100.0
+    cell_size: 0.5
+  ego_origin:
+  - 0.0
+  - 0.0
+  z_clip:
+  - -3.0
+  - 3.0
+paths:
+  inference_input_dir: data/inference_frames
+  finetune_data_dir: data/finetune_dataset
+  output_dir: outputs/finetuned
+  gt_label_dir: ''
+training:
+  epochs: 40
+  batch_size: 4
+  learning_rate: 0.0005
+  freeze_backbone_layers: 0
+  train_split: 0.9
+  save_every: 5
+visualization:
+  window_name: Adaptive 2.5D Lidar Map - DRDO (Fine-tuned)
+  image_size:
+  - 900
+  - 900
+  fps_overlay: true
