@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VARIANT — Adaptive 2.5D Lidar Mapping</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e0d;
+    --panel:#111815;
+    --panel-2:#161f1b;
+    --border:#22312a;
+    --border-bright:#345244;
+    --text:#e7efec;
+    --text-dim:#8fa69c;
+    --text-faint:#546b62;
+    --phosphor:#4cffa0;
+    --phosphor-dim:#1f5a3f;
+    --amber:#ffb454;
+    --terrain:#4d78ff;
+    --static:#f2d93a;
+    --dynamic:#ff5c5c;
+    --radius:3px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Inter', sans-serif;
+    line-height:1.5;
+    position:relative;
+  }
+  ::selection{ background:var(--phosphor-dim); color:var(--phosphor); }
+
+  .mono{ font-family:'JetBrains Mono', monospace; }
+  h1,h2,h3{ font-family:'Space Grotesk', sans-serif; }
+
+  /* faint scan texture over whole page */
+  body::before{
+    content:"";
+    position:fixed; inset:0;
+    pointer-events:none;
+    z-index:999;
+    background:repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.012) 0px,
+      rgba(255,255,255,0.012) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    mix-blend-mode:overlay;
+  }
+
+  a{ color:inherit; text-decoration:none; }
+  button{ font-family:inherit; cursor:pointer; }
+
+  .wrap{ max-width:1180px; margin:0 auto; padding:0 32px; }
+
+  /* ---------- NAV ---------- */
+  header.nav{
+    position:sticky; top:0; z-index:50;
+    background:rgba(10,14,13,0.88);
+    backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--border);
+  }
+  .nav-inner{
+    max-width:1180px; margin:0 auto; padding:16px 32px;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .brand{ display:flex; align-items:center; gap:10px; }
+  .brand svg{ width:26px; height:26px; }
+  .brand-name{ font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:16px; letter-spacing:0.5px;}
+  .brand-tag{ font-size:10px; color:var(--text-faint); letter-spacing:1.5px; font-family:'JetBrains Mono',monospace; }
+  .nav-links{ display:flex; gap:28px; font-size:13px; color:var(--text-dim); }
+  .nav-links a{ transition:color .15s; }
+  .nav-links a:hover{ color:var(--phosphor); }
+  .nav-status{
+    display:flex; align-items:center; gap:8px;
+    font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--text-faint);
+    border:1px solid var(--border); padding:5px 10px; border-radius:20px;
+  }
+  .dot{ width:6px; height:6px; border-radius:50%; background:var(--amber); box-shadow:0 0 6px var(--amber); animation:blink 2s infinite; }
+  @keyframes blink{ 0%,100%{opacity:1;} 50%{opacity:.35;} }
+
+  /* ---------- HERO ---------- */
+  .hero{
+    max-width:1180px; margin:0 auto; padding:88px 32px 100px;
+    display:grid; grid-template-columns:1.05fr 0.95fr; gap:60px; align-items:center;
+  }
+  .eyebrow{
+    font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:2px;
+    color:var(--phosphor); text-transform:uppercase; display:block; margin-bottom:18px;
+  }
+  .hero h1{
+    font-size:44px; line-height:1.12; font-weight:600; letter-spacing:-0.5px;
+    color:var(--text); max-width:520px;
+  }
+  .hero h1 em{ font-style:normal; color:var(--phosphor); }
+  .hero p{ margin-top:20px; color:var(--text-dim); font-size:15.5px; max-width:470px; }
+  .hero-ctas{ margin-top:34px; display:flex; gap:14px; }
+  .btn-primary{
+    background:var(--phosphor); color:#06110c; font-weight:600; font-size:13.5px;
+    padding:13px 22px; border-radius:var(--radius); border:none;
+    display:inline-flex; align-items:center; gap:8px; transition:transform .15s, box-shadow .15s;
+  }
+  .btn-primary:hover{ box-shadow:0 0 24px rgba(76,255,160,0.35); transform:translateY(-1px); }
+  .btn-ghost{
+    background:transparent; color:var(--text-dim); font-size:13.5px; font-weight:500;
+    padding:13px 20px; border-radius:var(--radius); border:1px solid var(--border);
+    transition:border-color .15s, color .15s;
+  }
+  .btn-ghost:hover{ border-color:var(--border-bright); color:var(--text); }
+
+  /* hero radar viz - the signature element, built from the actual ring config */
+  .hero-viz{ position:relative; display:flex; align-items:center; justify-content:center; }
+  .ring-labels{ font-family:'JetBrains Mono',monospace; font-size:9.5px; fill:var(--text-faint); }
+
+  /* ---------- SECTION SHELL ---------- */
+  main{ max-width:1180px; margin:0 auto; padding:0 32px 60px; }
+  .step{ padding:64px 0; border-top:1px solid var(--border); }
+  .step-head{ display:flex; gap:20px; align-items:baseline; margin-bottom:32px; }
+  .step-num{
+    font-family:'JetBrains Mono',monospace; font-size:13px; color:var(--phosphor);
+    border:1px solid var(--phosphor-dim); padding:3px 9px; border-radius:20px; flex-shrink:0;
+  }
+  .step-head h2{ font-size:23px; font-weight:600; }
+  .step-desc{ color:var(--text-dim); font-size:14px; max-width:640px; margin-top:6px; }
+
+  .panel{
+    background:var(--panel); border:1px solid var(--border); border-radius:6px;
+    padding:26px; position:relative;
+  }
+  /* HUD corner brackets - signature detail reused across every panel */
+  .panel::before, .panel::after{
+    content:""; position:absolute; width:14px; height:14px; pointer-events:none;
+  }
+  .panel::before{ top:-1px; left:-1px; border-top:2px solid var(--phosphor-dim); border-left:2px solid var(--phosphor-dim); }
+  .panel::after{ bottom:-1px; right:-1px; border-bottom:2px solid var(--phosphor-dim); border-right:2px solid var(--phosphor-dim); }
+
+  /* ---------- 01 UPLOAD ---------- */
+  .dropzone{
+    border:1.5px dashed var(--border-bright); border-radius:6px; padding:48px 24px;
+    text-align:center; transition:border-color .15s, background .15s; cursor:pointer;
+  }
+  .dropzone.dragover{ border-color:var(--phosphor); background:rgba(76,255,160,0.04); }
+  .dropzone svg{ width:34px; height:34px; color:var(--text-faint); margin-bottom:14px; }
+  .dropzone p{ font-size:14px; color:var(--text-dim); }
+  .link-btn{ background:none; border:none; color:var(--phosphor); text-decoration:underline; font-size:inherit; }
+  .hint{ margin-top:8px; font-size:11.5px; color:var(--text-faint); font-family:'JetBrains Mono',monospace; }
+
+  .file-list{ margin-top:16px; display:flex; flex-direction:column; gap:6px; }
+  .file-row{
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--panel-2); border:1px solid var(--border); border-radius:4px;
+    padding:9px 14px; font-family:'JetBrains Mono',monospace; font-size:12.5px;
+    animation:rowIn .25s ease;
+  }
+  @keyframes rowIn{ from{opacity:0; transform:translateY(-4px);} to{opacity:1; transform:translateY(0);} }
+  .file-row .fname{ color:var(--text); }
+  .file-row .fmeta{ color:var(--text-faint); }
+  .file-row .remove{ background:none; border:none; color:var(--text-faint); font-size:14px; }
+  .file-row .remove:hover{ color:var(--dynamic); }
+
+  .row-actions{ margin-top:20px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  .small{ padding:9px 16px; font-size:12.5px; }
+
+  /* ---------- 02 CONFIGURE ---------- */
+  .config-grid{ display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .card-select{
+    background:var(--panel-2); border:1px solid var(--border); border-radius:6px;
+    padding:18px; cursor:pointer; transition:border-color .15s, background .15s;
+  }
+  .card-select.active{ border-color:var(--phosphor); background:rgba(76,255,160,0.045); }
+  .card-select .top{ display:flex; justify-content:space-between; align-items:center; }
+  .card-select h4{ font-size:14.5px; font-weight:600; }
+  .radio{ width:15px; height:15px; border-radius:50%; border:1.5px solid var(--text-faint); position:relative; flex-shrink:0; }
+  .card-select.active .radio{ border-color:var(--phosphor); }
+  .card-select.active .radio::after{
+    content:""; position:absolute; inset:3px; border-radius:50%; background:var(--phosphor);
+  }
+  .card-select p{ font-size:12px; color:var(--text-dim); margin-top:8px; }
+  .tag-row{ margin-top:12px; display:flex; gap:6px; flex-wrap:wrap; }
+  .tag{
+    font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--text-faint);
+    border:1px solid var(--border); padding:3px 8px; border-radius:20px;
+  }
+
+  .device-toggle{ display:flex; border:1px solid var(--border); border-radius:20px; overflow:hidden; width:fit-content; }
+  .device-toggle button{
+    background:none; border:none; padding:8px 18px; font-size:12.5px; color:var(--text-dim);
+    font-family:'JetBrains Mono',monospace; transition:.15s;
+  }
+  .device-toggle button.active{ background:var(--phosphor); color:#06110c; font-weight:600; }
+
+  .ring-table{ margin-top:26px; }
+  .ring-row{
+    display:grid; grid-template-columns:90px 1fr 140px 100px; gap:16px; align-items:center;
+    padding:12px 0; border-bottom:1px solid var(--border); font-size:13px;
+  }
+  .ring-row:last-child{ border-bottom:none; }
+  .ring-row.head{ color:var(--text-faint); font-size:10.5px; text-transform:uppercase; letter-spacing:1px; font-family:'JetBrains Mono',monospace; }
+  .ring-chip{ display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono',monospace; font-weight:600; }
+  .ring-swatch{ width:9px; height:9px; border-radius:2px; }
+  .ring-bar{ height:5px; border-radius:3px; background:var(--panel-2); position:relative; overflow:hidden; }
+  .ring-bar span{ position:absolute; inset:0; border-radius:3px; }
+  input.cell-input{
+    background:var(--panel-2); border:1px solid var(--border); border-radius:4px;
+    color:var(--text); font-family:'JetBrains Mono',monospace; font-size:12.5px;
+    padding:6px 8px; width:100%;
+  }
+  input.cell-input:focus{ outline:none; border-color:var(--phosphor); }
+
+  .advanced-toggle{
+    margin-top:24px; display:flex; align-items:center; gap:8px; color:var(--text-dim);
+    font-size:13px; user-select:none;
+  }
+  .advanced-toggle svg{ width:13px; height:13px; transition:transform .2s; }
+  .advanced-toggle.open svg{ transform:rotate(90deg); }
+  .advanced-panel{
+    max-height:0; overflow:hidden; transition:max-height .3s ease;
+  }
+  .advanced-panel.open{ max-height:600px; margin-top:18px; }
+  .ft-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field label{ font-size:11.5px; color:var(--text-faint); font-family:'JetBrains Mono',monospace; }
+  .field input, .field select{
+    background:var(--panel-2); border:1px solid var(--border); border-radius:4px;
+    color:var(--text); font-size:13px; padding:9px 10px; font-family:'Inter',sans-serif;
+  }
+  .field input:focus, .field select:focus{ outline:none; border-color:var(--phosphor); }
+
+  /* ---------- 03 RUN ---------- */
+  .run-panel{ display:flex; flex-direction:column; align-items:center; padding:44px 26px; }
+  .run-btn{
+    background:var(--phosphor); color:#06110c; font-weight:700; font-size:14.5px;
+    padding:16px 40px; border-radius:30px; border:none; letter-spacing:0.3px;
+    display:flex; align-items:center; gap:10px; transition:box-shadow .15s;
+  }
+  .run-btn:hover{ box-shadow:0 0 30px rgba(76,255,160,0.4); }
+  .run-btn:disabled{ opacity:.5; cursor:not-allowed; box-shadow:none; }
+  .progress-wrap{ width:100%; max-width:480px; margin-top:30px; display:none; }
+  .progress-wrap.show{ display:block; }
+  .progress-meta{ display:flex; justify-content:space-between; font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--text-dim); margin-bottom:8px; }
+  .progress-track{ height:6px; background:var(--panel-2); border-radius:6px; overflow:hidden; }
+  .progress-fill{ height:100%; width:0%; background:linear-gradient(90deg, var(--phosphor-dim), var(--phosphor)); transition:width .2s linear; }
+  .log-console{
+    width:100%; max-width:480px; margin-top:20px; background:#060907; border:1px solid var(--border);
+    border-radius:4px; padding:12px 14px; height:118px; overflow-y:auto; display:none;
+    font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--phosphor); line-height:1.7;
+  }
+  .log-console.show{ display:block; }
+  .log-console .dim-line{ color:var(--text-faint); }
+
+  /* ---------- 04 RESULTS ---------- */
+  .results-grid{ display:grid; grid-template-columns:1.15fr 0.85fr; gap:20px; }
+  .canvas-panel{ padding:20px; }
+  .canvas-panel .canvas-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+  .frame-nav{ display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .frame-nav select{
+    background:var(--panel); color:var(--text); border:1px solid var(--border);
+    font-family:'JetBrains Mono',monospace; font-size:12px; padding:7px 10px; border-radius:var(--radius); flex:1;
+  }
+  #summaryTable td, #summaryTable th{ border-bottom:1px solid var(--border); }
+  #summaryTable tbody tr{ cursor:pointer; }
+  #summaryTable tbody tr:hover{ background:rgba(255,255,255,0.04); }
+  #summaryTable tbody tr.active-row{ background:rgba(76,255,160,0.08); color:var(--phosphor); }
+  .canvas-head h4{ font-size:13px; color:var(--text-dim); font-weight:500; }
+  .legend{ display:flex; gap:14px; }
+  .legend-item{ display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-dim); font-family:'JetBrains Mono',monospace; }
+  .legend-swatch{ width:9px; height:9px; border-radius:2px; }
+
+  .metrics-col{ display:flex; flex-direction:column; gap:14px; }
+  .metric-card{ padding:18px 20px; }
+  .metric-label{ font-size:11px; color:var(--text-faint); font-family:'JetBrains Mono',monospace; letter-spacing:0.5px; text-transform:uppercase; }
+  .metric-value{ font-size:28px; font-weight:600; font-family:'Space Grotesk',sans-serif; margin-top:6px; }
+  .metric-value.phosphor{ color:var(--phosphor); }
+  .metric-sub{ font-size:11.5px; color:var(--text-dim); margin-top:4px; }
+
+  .downloads{ margin-top:24px; display:flex; gap:12px; flex-wrap:wrap; }
+  .dl-btn{
+    display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:6px;
+    padding:11px 16px; font-size:12.5px; color:var(--text-dim); transition:.15s;
+  }
+  .dl-btn:hover{ border-color:var(--border-bright); color:var(--text); }
+  .dl-btn svg{ width:14px; height:14px; }
+
+  /* ---------- FOOTER ---------- */
+  footer{ border-top:1px solid var(--border); padding:34px 32px; }
+  .footer-inner{ max-width:1180px; margin:0 auto; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+  .footer-inner p{ font-size:11.5px; color:var(--text-faint); font-family:'JetBrains Mono',monospace; max-width:560px; }
+  .footer-links{ display:flex; gap:18px; font-size:12px; color:var(--text-dim); }
+
+  @media (max-width: 860px){
+    .hero{ grid-template-columns:1fr; padding-top:56px; }
+    .hero-viz{ order:-1; }
+    .nav-links{ display:none; }
+    .config-grid, .results-grid, .ft-grid{ grid-template-columns:1fr; }
+    .ring-row{ grid-template-columns:70px 1fr 90px; }
+    .ring-row .ring-input-col{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-inner">
+    <div class="brand">
+      <svg viewBox="0 0 26 26" fill="none">
+        <circle cx="13" cy="13" r="3" fill="#4cffa0"/>
+        <circle cx="13" cy="13" r="7" stroke="#4cffa0" stroke-width="1" opacity="0.55"/>
+        <circle cx="13" cy="13" r="11.5" stroke="#4cffa0" stroke-width="1" opacity="0.28"/>
+      </svg>
+      <div>
+        <div class="brand-name">VARIANT</div>
+        <div class="brand-tag">2.5D FOVEATED LIDAR MAP</div>
+      </div>
+    </div>
+    <nav class="nav-links">
+      <a href="#upload">Upload</a>
+      <a href="#configure">Configure</a>
+      <a href="#run">Run</a>
+      <a href="#results">Results</a>
+    </nav>
+    <div class="nav-status"><span class="dot"></span> INTERFACE MOCKUP — NOT WIRED TO BACKEND</div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="hero-text">
+    <span class="eyebrow">DRDO · IDEX · Problem Statement 26053</span>
+    <h1>Full resolution near you.<br>Coarse resolution <em>far</em> from you.</h1>
+    <p>Drop in raw lidar frames, run them through a pretrained SemanticKITTI segmentation model, and watch the scene resolve into a foveated grid — dense near the sensor, sparse toward the edge, exactly like the human eye.</p>
+    <div class="hero-ctas">
+      <a href="#upload" class="btn-primary">
+        Upload a frame
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+      <a href="#configure" class="btn-ghost">Configure the model</a>
+    </div>
+  </div>
+  <div class="hero-viz">
+    <svg viewBox="0 0 360 360" width="100%" height="100%" style="max-width:400px;">
+      <circle cx="180" cy="180" r="150" fill="none" stroke="#22312a" stroke-width="1"/>
+      <circle cx="180" cy="180" r="112" fill="none" stroke="#22312a" stroke-width="1"/>
+      <circle cx="180" cy="180" r="74" fill="none" stroke="#22312a" stroke-width="1"/>
+      <circle cx="180" cy="180" r="36" fill="none" stroke="#345244" stroke-width="1"/>
+      <!-- sparse points scattered by ring, denser near center -->
+      <g id="scatterPts" fill="#4cffa0"></g>
+      <!-- rotating scan sweep -->
+      <g id="sweep" style="transform-origin:180px 180px;">
+        <path d="M180 180 L180 30 A150 150 0 0 1 250 55 Z" fill="url(#sweepGrad)"/>
+      </g>
+      <defs>
+        <linearGradient id="sweepGrad" x1="180" y1="180" x2="250" y2="55" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#4cffa0" stop-opacity="0.35"/>
+          <stop offset="1" stop-color="#4cffa0" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <circle cx="180" cy="180" r="3.5" fill="#4cffa0"/>
+      <text x="184" y="46" class="ring-labels">EDGE · 0.50m</text>
+      <text x="184" y="84" class="ring-labels">FAR · 0.35m</text>
+      <text x="184" y="122" class="ring-labels">MID · 0.20m</text>
+      <text x="184" y="160" class="ring-labels">NEAR · 0.05m</text>
+    </svg>
+  </div>
+</section>
+
+<main>
+
+  <!-- 01 UPLOAD -->
+  <section class="step" id="upload">
+    <div class="step-head">
+      <span class="step-num mono">01</span>
+      <div>
+        <h2>Upload lidar frames</h2>
+        <p class="step-desc">Point clouds go here — one file per frame. KITTI-style <code class="mono">.bin</code> (float32, N×4: x, y, z, intensity) or <code class="mono">.npy</code> (N×3 or N×4) are both accepted.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" multiple accept=".bin,.npy" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
+        <p>Drag <span class="mono">.bin</span> / <span class="mono">.npy</span> frames here, or <button class="link-btn" id="browseBtn">browse files</button></p>
+        <p class="hint">Accepted: KITTI .bin (N×4 float32) · .npy (N×3/N×4)</p>
+      </div>
+      <div class="file-list" id="fileList"></div>
+      <div class="row-actions">
+        <button class="btn-ghost small" id="genTestFrame">Generate a synthetic test frame instead</button>
+        <span class="hint" id="fileCount">0 frames queued</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 02 CONFIGURE -->
+  <section class="step" id="configure">
+    <div class="step-head">
+      <span class="step-num mono">02</span>
+      <div>
+        <h2>Configure the run</h2>
+        <p class="step-desc">Pick the pretrained backbone, the device to run it on, and the ring layout of the foveated grid.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="config-grid">
+        <div class="card-select active" data-model="RandLANet">
+          <div class="top"><h4>RandLA-Net</h4><span class="radio"></span></div>
+          <p>Pretrained on SemanticKITTI. Faster inference, lighter memory footprint — good default for a live dashboard.</p>
+          <div class="tag-row"><span class="tag">19 classes</span><span class="tag">torch</span></div>
+        </div>
+        <div class="card-select" data-model="KPFCNN">
+          <div class="top"><h4>KPConv (KPFCNN)</h4><span class="radio"></span></div>
+          <p>Also pretrained on SemanticKITTI. Slightly higher accuracy, heavier compute — better suited to offline runs.</p>
+          <div class="tag-row"><span class="tag">19 classes</span><span class="tag">torch</span></div>
+        </div>
+      </div>
+
+      <div style="margin-top:26px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:14px;">
+        <div>
+          <div style="font-size:13px; color:var(--text-dim); margin-bottom:8px;">Run device</div>
+          <div class="device-toggle" id="deviceToggle">
+            <button class="active" data-device="cuda">GPU · CUDA</button>
+            <button data-device="cpu">CPU</button>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:13px; color:var(--text-dim); margin-bottom:8px;">Ground-truth labels (optional, enables live mIoU)</div>
+          <button class="btn-ghost small">Attach .label folder</button>
+        </div>
+      </div>
+
+      <div style="margin-top:22px;">
+        <div style="font-size:13px; color:var(--text-dim); margin-bottom:8px;">
+          Pretrained checkpoint path (server-side, e.g. <code>checkpoints/randlanet_semantickitti_202201071330utc.pth</code>)
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <input type="text" id="checkpointPath" class="mono"
+                 placeholder="checkpoints/randlanet_semantickitti_202201071330utc.pth"
+                 style="flex:1; min-width:280px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:var(--radius); padding:9px 12px; font-size:12.5px;">
+          <button class="btn-ghost small" id="checkBackendBtn" type="button">Check backend</button>
+          <span id="backendStatusBadge" class="mono" style="font-size:12px; color:var(--text-dim);"></span>
+        </div>
+        <p class="hint" style="margin-top:8px;">
+          Leave blank to use the transparent heuristic-fallback classifier. If this path doesn't resolve to a
+          real checkpoint on the server, or torch/open3d aren't installed there, the run silently falls back
+          to the heuristic and the results badge will say so.
+        </p>
+      </div>
+
+      <div class="ring-table">
+        <div class="ring-row head">
+          <span>Ring</span><span>Radius</span><span>Cell size</span><span>&nbsp;</span>
+        </div>
+        <div class="ring-row">
+          <div class="ring-chip"><span class="ring-swatch" style="background:#4cffa0"></span>NEAR</div>
+          <div>0.0 – 10.0 m</div>
+          <div class="ring-bar"><span style="width:10%; background:#4cffa0;"></span></div>
+          <div class="ring-input-col"><input class="cell-input" value="0.05 m"></div>
+        </div>
+        <div class="ring-row">
+          <div class="ring-chip"><span class="ring-swatch" style="background:#9fe6c0"></span>MID</div>
+          <div>10.0 – 30.0 m</div>
+          <div class="ring-bar"><span style="width:40%; background:#9fe6c0;"></span></div>
+          <div class="ring-input-col"><input class="cell-input" value="0.20 m"></div>
+        </div>
+        <div class="ring-row">
+          <div class="ring-chip"><span class="ring-swatch" style="background:#e0c76a"></span>FAR</div>
+          <div>30.0 – 60.0 m</div>
+          <div class="ring-bar"><span style="width:70%; background:#e0c76a;"></span></div>
+          <div class="ring-input-col"><input class="cell-input" value="0.35 m"></div>
+        </div>
+        <div class="ring-row">
+          <div class="ring-chip"><span class="ring-swatch" style="background:#ffb454"></span>EDGE</div>
+          <div>60.0 – 100.0 m</div>
+          <div class="ring-bar"><span style="width:100%; background:#ffb454;"></span></div>
+          <div class="ring-input-col"><input class="cell-input" value="0.50 m"></div>
+        </div>
+      </div>
+
+      <div class="advanced-toggle" id="advToggle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"/></svg>
+        Advanced — fine-tune this model on your own labelled data
+      </div>
+      <div class="advanced-panel" id="advPanel">
+        <div class="ft-grid">
+          <div class="field"><label>RAW POINT CLOUD FOLDER</label><input type="text" placeholder="path/to/your/pointclouds" readonly></div>
+          <div class="field"><label>RAW LABEL FOLDER (.npy, matching filenames)</label><input type="text" placeholder="path/to/your/labels" readonly></div>
+          <div class="field"><label>EPOCHS</label><input type="number" value="40"></div>
+          <div class="field"><label>BATCH SIZE</label><input type="number" value="4"></div>
+          <div class="field"><label>LEARNING RATE</label><input type="text" value="0.0005"></div>
+          <div class="field"><label>FREEZE FIRST N LAYERS</label><input type="number" value="0"></div>
+        </div>
+        <p class="hint" style="margin-top:14px;">Fine-tuning starts from the pretrained checkpoint above — never from random weights — and saves an adapted copy you can drop back into Configure.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 03 RUN -->
+  <section class="step" id="run">
+    <div class="step-head">
+      <span class="step-num mono">03</span>
+      <div>
+        <h2>Run inference</h2>
+        <p class="step-desc">Each frame runs through the pretrained backbone, gets remapped to terrain / static / dynamic, and is inserted into the grid — no weights are updated here.</p>
+      </div>
+    </div>
+    <div class="panel run-panel">
+      <button class="run-btn" id="runBtn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        Run inference on queued frames
+      </button>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-meta"><span id="progressLabel">Frame 0 / 0</span><span id="progressPct">0%</span></div>
+        <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      </div>
+      <div class="log-console mono" id="logConsole"></div>
+    </div>
+  </section>
+
+  <!-- 04 RESULTS -->
+  <section class="step" id="results">
+    <div class="step-head">
+      <span class="step-num mono">04</span>
+      <div>
+        <h2>Dashboard & results</h2>
+        <p class="step-desc">The live map, color-coded by dominant class, plus the numbers that matter: speed, memory saved by foveation, and accuracy against any ground truth you attached.</p>
+      </div>
+    </div>
+    <div class="results-grid">
+      <div class="panel canvas-panel">
+        <div class="canvas-head">
+          <h4 id="resultsFrameLabel">outputs/outputimage/frame_000012.png</h4>
+          <div class="legend">
+            <div class="legend-item"><span class="legend-swatch" style="background:var(--terrain);"></span>Terrain</div>
+            <div class="legend-item"><span class="legend-swatch" style="background:var(--static);"></span>Static</div>
+            <div class="legend-item"><span class="legend-swatch" style="background:var(--dynamic);"></span>Dynamic</div>
+          </div>
+        </div>
+        <div class="frame-nav" id="frameNav" style="display:none;">
+          <button class="btn-ghost small" id="framePrev" type="button">&larr; Prev</button>
+          <select id="frameSelect" class="mono"></select>
+          <button class="btn-ghost small" id="frameNext" type="button">Next &rarr;</button>
+        </div>
+        <svg viewBox="0 0 400 400" width="100%" id="resultsCanvas"></svg>
+      </div>
+      <div class="metrics-col">
+        <div class="panel metric-card">
+          <div class="metric-label">Frame rate</div>
+          <div class="metric-value phosphor" id="metFps">—</div>
+          <div class="metric-sub">frames / second, dashboard render included</div>
+        </div>
+        <div class="panel metric-card">
+          <div class="metric-label">Memory saving vs. uniform 5cm grid</div>
+          <div class="metric-value phosphor" id="metMem">—</div>
+          <div class="metric-sub" id="metMemSub">sparse cells vs. equivalent fixed grid</div>
+        </div>
+        <div class="panel metric-card">
+          <div class="metric-label">Mean IoU (terrain / static / dynamic)</div>
+          <div class="metric-value" id="metIou">n/a</div>
+          <div class="metric-sub">populates once a ground-truth label folder is attached</div>
+        </div>
+        <div class="downloads">
+          <a class="dl-btn" id="dlCsv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>run_log.csv</a>
+          <a class="dl-btn" id="dlJson"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>results.json</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="summaryPanel" style="margin-top:20px; display:none;">
+      <div class="canvas-head" style="margin-bottom:12px;">
+        <h4>All frames in this run</h4>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="mono" id="summaryTable" style="width:100%; border-collapse:collapse; font-size:12px;">
+          <thead>
+            <tr style="text-align:left; color:var(--text-dim);">
+              <th style="padding:6px 10px;">#</th>
+              <th style="padding:6px 10px;">frame_id</th>
+              <th style="padding:6px 10px;">pts</th>
+              <th style="padding:6px 10px;">classifier</th>
+              <th style="padding:6px 10px;">fps</th>
+              <th style="padding:6px 10px;">active cells</th>
+              <th style="padding:6px 10px;">mem saving</th>
+              <th style="padding:6px 10px;">mean IoU</th>
+            </tr>
+          </thead>
+          <tbody id="summaryTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <p id="footerNote">Connected to a live backend service. Point-cloud parsing, ring binning, and memory accounting are the real project code; classification uses the backend's active model (see the status badge above).</p>
+    <div class="footer-links">
+      <a href="#upload">Upload</a>
+      <a href="#configure">Configure</a>
+      <a href="#run">Run</a>
+      <a href="#results">Results</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  /* ============================================================
+     BACKEND CLIENT
+     ============================================================ */
+  const DEFAULT_API_BASE = "http://localhost:8000";
+  let API_BASE = localStorage.getItem("api_base") || DEFAULT_API_BASE; // ok here: not an artifact, plain static page
+
+  const DEFAULT_RINGS = [
+    {name:"near", r_min:0.0,  r_max:10.0,  cell_size:0.05},
+    {name:"mid",  r_min:10.0, r_max:30.0,  cell_size:0.20},
+    {name:"far",  r_min:30.0, r_max:60.0,  cell_size:0.35},
+    {name:"edge", r_min:60.0, r_max:100.0, cell_size:0.50},
+  ];
+
+  async function api(path, opts){
+    const res = await fetch(API_BASE + path, opts);
+    if(!res.ok){
+      const text = await res.text().catch(()=> "");
+      throw new Error(`${res.status} ${res.statusText} ${text}`.trim());
+    }
+    return res.json();
+  }
+
+  // ---- connection badge ----
+  const navStatus = document.querySelector(".nav-status");
+  navStatus.innerHTML = `<span class="dot" id="connDot"></span><span id="connLabel">connecting…</span>
+    <input id="apiBaseInput" class="mono" style="background:none;border:none;color:inherit;width:150px;margin-left:6px;" value="${API_BASE}">`;
+  const connDot = document.getElementById("connDot");
+  const connLabel = document.getElementById("connLabel");
+  const apiBaseInput = document.getElementById("apiBaseInput");
+  apiBaseInput.addEventListener("change", ()=>{
+    API_BASE = apiBaseInput.value.trim().replace(/\/$/,"");
+    localStorage.setItem("api_base", API_BASE);
+    checkConnection();
+  });
+
+  async function checkConnection(){
+    connLabel.textContent = "connecting…";
+    connDot.style.background = "var(--amber)";
+    try{
+      const status = await api("/api/backend/status");
+      connDot.style.background = status.is_pretrained_model ? "#4cffa0" : "var(--amber)";
+      connLabel.textContent = status.is_pretrained_model
+        ? `LIVE — ${status.model} (${status.device})`
+        : `CONNECTED — ${status.backend} (placeholder, no trained weights)`;
+    }catch(err){
+      connDot.style.background = "#ff5c5c";
+      connLabel.textContent = "backend unreachable";
+    }
+  }
+  checkConnection();
+
+  function showFooterWarning(msg){
+    document.getElementById("footerNote").textContent = msg;
+  }
+
+  /* ============================================================
+     01 UPLOAD — real multipart upload to /api/frames
+     ============================================================ */
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const fileList = document.getElementById('fileList');
+  const fileCount = document.getElementById('fileCount');
+  let queued = []; // [{name, frame_id, n_points, pending}]
+
+  document.getElementById('browseBtn').addEventListener('click', e=>{ e.stopPropagation(); fileInput.click(); });
+  dropzone.addEventListener('click', ()=> fileInput.click());
+  ['dragover','dragenter'].forEach(ev=> dropzone.addEventListener(ev, e=>{ e.preventDefault(); dropzone.classList.add('dragover'); }));
+  ['dragleave','drop'].forEach(ev=> dropzone.addEventListener(ev, e=>{ e.preventDefault(); dropzone.classList.remove('dragover'); }));
+  dropzone.addEventListener('drop', e=> addFiles(e.dataTransfer.files));
+  fileInput.addEventListener('change', e=> addFiles(e.target.files));
+
+  function updateFileCount(){
+    fileCount.textContent = `${queued.length} frame${queued.length!==1?'s':''} queued`;
+  }
+
+  async function uploadBlob(name, blob){
+    const entry = {name, frame_id:null, n_points:null, pending:true};
+    queued.push(entry);
+    const row = renderFileRow(name, "uploading…");
+    updateFileCount();
+    try{
+      const form = new FormData();
+      form.append("file", blob, name);
+      const res = await fetch(API_BASE + "/api/frames", {method:"POST", body:form});
+      if(!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      entry.frame_id = data.frame_id;
+      entry.n_points = data.n_points;
+      entry.pending = false;
+      row.querySelector(".fmeta").innerHTML = `${data.n_points.toLocaleString()} pts &nbsp;<button class="remove">✕</button>`;
+      row.querySelector(".remove").onclick = ()=> removeFrame(entry, row);
+    }catch(err){
+      row.querySelector(".fmeta").innerHTML = `<span style="color:#ff5c5c;">upload failed — ${err.message}</span> &nbsp;<button class="remove">✕</button>`;
+      row.querySelector(".remove").onclick = ()=> removeFrame(entry, row);
+    }
+  }
+
+  // Removes a frame from the queue and, if it made it to the server, tells
+  // the backend to drop it too (DELETE /api/frames/{id}) so FRAMES doesn't
+  // silently accumulate stale frames for the rest of the session.
+  async function removeFrame(entry, row){
+    row.remove();
+    queued = queued.filter(q=>q!==entry);
+    updateFileCount();
+    if(entry.frame_id){
+      try{ await api(`/api/frames/${entry.frame_id}`, {method:"DELETE"}); }
+      catch(err){ /* best-effort cleanup -- frame is already gone from the UI */ }
+    }
+  }
+
+  function addFiles(list){
+    Array.from(list).forEach(f=>{
+      if(!/\.(bin|npy)$/i.test(f.name)) return; // both formats are parsed server-side
+      uploadBlob(f.name, f);
+    });
+  }
+
+  function renderFileRow(name, meta){
+    const row = document.createElement('div');
+    row.className = 'file-row';
+    row.innerHTML = `<span class="fname">${name}</span><span class="fmeta">${meta}</span>`;
+    fileList.appendChild(row);
+    return row;
+  }
+
+  // ---- synthetic frame: ported from generate_test_frame.py, uploaded like a real file ----
+  function gaussian(mean, std){
+    let u=0,v=0; while(u===0)u=Math.random(); while(v===0)v=Math.random();
+    return mean + std*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  }
+  function generateSyntheticBin(){
+    const nGround=6000, nObs=1200; // trimmed from the python defaults for browser perf
+    const pts = new Float32Array((nGround+nObs)*4);
+    let p=0;
+    for(let i=0;i<nGround;i++){
+      const r = 1+Math.random()*39, theta = Math.random()*2*Math.PI;
+      pts[p++] = r*Math.cos(theta); pts[p++] = r*Math.sin(theta); pts[p++] = gaussian(-1.6,0.02); pts[p++] = Math.random();
+    }
+    for(let i=0;i<nObs;i++){
+      pts[p++] = -15+Math.random()*30; pts[p++] = 5+Math.random()*25; pts[p++] = -1.5+Math.random()*3; pts[p++] = Math.random();
+    }
+    return new Blob([pts.buffer], {type:"application/octet-stream"});
+  }
+  let synthCount = 0;
+  document.getElementById('genTestFrame').addEventListener('click', ()=>{
+    const name = `synthetic_${String(synthCount++).padStart(3,"0")}.bin`;
+    uploadBlob(name, generateSyntheticBin());
+  });
+
+  /* ============================================================
+     02 CONFIGURE
+     ============================================================ */
+  document.querySelectorAll('.card-select').forEach(card=>{
+    card.addEventListener('click', ()=>{
+      document.querySelectorAll('.card-select').forEach(c=>c.classList.remove('active'));
+      card.classList.add('active');
+    });
+  });
+  document.querySelectorAll('#deviceToggle button').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('#deviceToggle button').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+  const advToggle = document.getElementById('advToggle');
+  const advPanel = document.getElementById('advPanel');
+  advToggle.addEventListener('click', ()=>{
+    advToggle.classList.toggle('open');
+    advPanel.classList.toggle('open');
+  });
+
+  function currentRings(){
+    const inputs = document.querySelectorAll('.cell-input');
+    return DEFAULT_RINGS.map((ring,i)=>({
+      ...ring,
+      cell_size: parseFloat(inputs[i].value) || ring.cell_size
+    }));
+  }
+  function currentModel(){
+    return document.querySelector('.card-select.active')?.dataset.model || "RandLANet";
+  }
+  function currentDevice(){
+    return document.querySelector('#deviceToggle button.active')?.dataset.device || "cpu";
+  }
+  function currentCheckpointPath(){
+    const v = document.getElementById('checkpointPath').value.trim();
+    return v.length ? v : null;
+  }
+
+  /* ============================================================
+     BACKEND STATUS CHECK — hits GET /api/backend/status so the user
+     can confirm the real model actually loaded before running
+     ============================================================ */
+  const checkBackendBtn = document.getElementById('checkBackendBtn');
+  const backendStatusBadge = document.getElementById('backendStatusBadge');
+
+  checkBackendBtn.addEventListener('click', async ()=>{
+    backendStatusBadge.textContent = 'checking…';
+    backendStatusBadge.style.color = 'var(--text-dim)';
+    try{
+      const params = new URLSearchParams({
+        model: currentModel(),
+        device: currentDevice(),
+      });
+      const ckpt = currentCheckpointPath();
+      if(ckpt) params.set('checkpoint_path', ckpt);
+
+      const status = await api(`/api/backend/status?${params.toString()}`);
+      if(status.is_pretrained_model){
+        backendStatusBadge.textContent = `✓ ${status.backend} loaded (${status.model || currentModel()}, ${status.device})`;
+        backendStatusBadge.style.color = 'var(--phosphor)';
+      }else{
+        backendStatusBadge.textContent = `⚠ falling back to ${status.backend} — ${status.note || 'no checkpoint loaded'}`;
+        backendStatusBadge.style.color = 'var(--amber)';
+      }
+    }catch(err){
+      backendStatusBadge.textContent = 'ERROR: ' + err.message;
+      backendStatusBadge.style.color = 'var(--dynamic)';
+    }
+  });
+
+  /* ============================================================
+     03 RUN — real POST /api/runs + poll /api/runs/{id}/status
+     ============================================================ */
+  const runBtn = document.getElementById('runBtn');
+  const progressWrap = document.getElementById('progressWrap');
+  const progressFill = document.getElementById('progressFill');
+  const progressLabel = document.getElementById('progressLabel');
+  const progressPct = document.getElementById('progressPct');
+  const logConsole = document.getElementById('logConsole');
+
+  function logLine(t){
+    const d=document.createElement('div'); d.textContent = t;
+    logConsole.appendChild(d); logConsole.scrollTop = logConsole.scrollHeight;
+  }
+
+  let lastRunId = null;
+
+  runBtn.addEventListener('click', async ()=>{
+    const readyFrames = queued.filter(q=>q.frame_id);
+    if(readyFrames.length===0){
+      alert("Add at least one uploaded or synthetic frame first.");
+      return;
+    }
+    progressWrap.classList.add('show');
+    logConsole.classList.add('show');
+    logConsole.innerHTML = '';
+    runBtn.disabled = true;
+    logLine('> requesting run …');
+    const ckptForLog = currentCheckpointPath();
+    logLine(ckptForLog
+      ? `> checkpoint_path: ${ckptForLog} (falls back to heuristic-fallback if this doesn't load)`
+      : '> no checkpoint_path set — using heuristic-fallback classifier');
+
+    let runId;
+    try{
+      const body = {
+        frame_ids: readyFrames.map(f=>f.frame_id),
+        rings: currentRings(),
+        model: currentModel(),
+        device: currentDevice(),
+        checkpoint_path: currentCheckpointPath(),
+      };
+      const created = await api("/api/runs", {
+        method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)
+      });
+      runId = created.run_id;
+      lastRunId = runId;
+    }catch(err){
+      logLine('> ERROR: could not reach backend — ' + err.message);
+      runBtn.disabled = false;
+      return;
+    }
+
+    const total = readyFrames.length;
+    const poll = setInterval(async ()=>{
+      let status;
+      try{ status = await api(`/api/runs/${runId}/status`); }
+      catch(err){ clearInterval(poll); logLine('> ERROR polling status: '+err.message); runBtn.disabled=false; return; }
+
+      const pct = Math.round((status.current/Math.max(status.total,1))*100);
+      progressFill.style.width = pct+'%';
+      progressLabel.textContent = `Frame ${status.current} / ${status.total}`;
+      progressPct.textContent = pct+'%';
+
+      logConsole.innerHTML = '';
+      status.log.forEach(logLine);
+
+      if(status.status === 'done'){
+        clearInterval(poll);
+        runBtn.disabled = false;
+        try{
+          const results = await populateResultsFromRun(runId);
+        }catch(err){
+          logLine('> ERROR fetching results: '+err.message);
+        }
+        document.getElementById('dlCsv').href = API_BASE + `/api/runs/${runId}/log.csv`;
+        document.getElementById('dlCsv').setAttribute('download','run_log.csv');
+        document.getElementById('results').scrollIntoView({behavior:'smooth', block:'start'});
+      }
+    }, 400);
+  });
+
+  /* ============================================================
+     04 RESULTS — render REAL cell data returned by the backend.
+     Every frame in the run is browsable via the prev/next selector
+     and listed in the summary table below; nothing is discarded.
+     ============================================================ */
+  const COLORS = {0:'#4d78ff', 1:'#f2d93a', 2:'#ff5c5c'};
+
+  let currentRunResults = [];
+  let currentFrameIdx = 0;
+
+  function cellWorldRect(rings, ringId, ix, iy){
+    const cs = rings[ringId].cell_size;
+    const x0 = ix*cs, y0 = iy*cs;
+    return [x0, y0, x0+cs, y0+cs];
+  }
+
+  function renderFrameCanvas(frameResult){
+    const rings = currentRings();
+    const maxR = rings[rings.length-1].r_max;
+
+    const svg = document.getElementById('resultsCanvas');
+    svg.innerHTML = '';
+    const cx=200, cy=200, pxPerM = 190/maxR;
+
+    frameResult.cells.forEach(c=>{
+      const [x0,y0,x1,y1] = cellWorldRect(rings, c.ring, c.ix, c.iy);
+      const px0 = cx + x0*pxPerM, py0 = cy - y1*pxPerM;
+      const px1 = cx + x1*pxPerM, py1 = cy - y0*pxPerM;
+      const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      rect.setAttribute('x', Math.min(px0,px1));
+      rect.setAttribute('y', Math.min(py0,py1));
+      rect.setAttribute('width', Math.max(Math.abs(px1-px0),1));
+      rect.setAttribute('height', Math.max(Math.abs(py1-py0),1));
+      rect.setAttribute('fill', COLORS[c.cls] || '#546b62');
+      rect.setAttribute('opacity', 0.55 + 0.4*Math.min(Math.max((c.z_mean+3)/6,0),1));
+      svg.appendChild(rect);
+    });
+
+    rings.forEach(r=>{
+      const ring = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      ring.setAttribute('cx',cx); ring.setAttribute('cy',cy); ring.setAttribute('r', r.r_max*pxPerM);
+      ring.setAttribute('fill','none'); ring.setAttribute('stroke','#2a3a32'); ring.setAttribute('stroke-width','1');
+      svg.appendChild(ring);
+    });
+    const ego = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    ego.setAttribute('cx',cx); ego.setAttribute('cy',cy); ego.setAttribute('r',4); ego.setAttribute('fill','#4cffa0');
+    svg.appendChild(ego);
+  }
+
+  function showFrame(idx){
+    if(!currentRunResults.length) return;
+    currentFrameIdx = Math.max(0, Math.min(idx, currentRunResults.length-1));
+    const f = currentRunResults[currentFrameIdx];
+
+    document.getElementById('metFps').textContent = f.fps.toFixed(1);
+    document.getElementById('metMem').textContent = f.memory_saving_percent + '%';
+    document.getElementById('metMemSub').textContent =
+      `${f.active_cells.toLocaleString()} sparse cells vs. ${f.equivalent_uniform_cells.toLocaleString()} uniform`;
+    document.getElementById('metIou').textContent = f.mean_iou;
+    document.getElementById('resultsFrameLabel').textContent =
+      `frame ${currentFrameIdx+1} / ${currentRunResults.length} (${f.frame_id}) · ${f.n_points.toLocaleString()} pts · classifier: ${f.source}`;
+
+    renderFrameCanvas(f);
+
+    const sel = document.getElementById('frameSelect');
+    if(sel) sel.value = String(currentFrameIdx);
+
+    document.querySelectorAll('#summaryTableBody tr').forEach((row,i)=>{
+      row.classList.toggle('active-row', i === currentFrameIdx);
+    });
+
+    document.getElementById('framePrev').disabled = currentFrameIdx === 0;
+    document.getElementById('frameNext').disabled = currentFrameIdx === currentRunResults.length-1;
+  }
+
+  function buildFrameNav(results){
+    const nav = document.getElementById('frameNav');
+    const sel = document.getElementById('frameSelect');
+    nav.style.display = results.length > 1 ? 'flex' : 'none';
+    sel.innerHTML = results.map((r,i)=>
+      `<option value="${i}">frame ${i+1}/${results.length} — ${r.frame_id}</option>`
+    ).join('');
+  }
+
+  function buildSummaryTable(results){
+    const panel = document.getElementById('summaryPanel');
+    const body = document.getElementById('summaryTableBody');
+    panel.style.display = results.length ? 'block' : 'none';
+    body.innerHTML = results.map((r,i)=>`
+      <tr data-idx="${i}">
+        <td style="padding:6px 10px;">${i+1}</td>
+        <td style="padding:6px 10px;">${r.frame_id}</td>
+        <td style="padding:6px 10px;">${r.n_points.toLocaleString()}</td>
+        <td style="padding:6px 10px;">${r.source}</td>
+        <td style="padding:6px 10px;">${r.fps.toFixed(1)}</td>
+        <td style="padding:6px 10px;">${r.active_cells.toLocaleString()}</td>
+        <td style="padding:6px 10px;">${r.memory_saving_percent}%</td>
+        <td style="padding:6px 10px;">${r.mean_iou}</td>
+      </tr>
+    `).join('');
+    body.querySelectorAll('tr').forEach(row=>{
+      row.addEventListener('click', ()=> showFrame(parseInt(row.dataset.idx,10)));
+    });
+  }
+
+  document.getElementById('framePrev').addEventListener('click', ()=> showFrame(currentFrameIdx-1));
+  document.getElementById('frameNext').addEventListener('click', ()=> showFrame(currentFrameIdx+1));
+  document.getElementById('frameSelect').addEventListener('change', (e)=> showFrame(parseInt(e.target.value,10)));
+
+  async function populateResultsFromRun(runId){
+    const results = await api(`/api/runs/${runId}/results`);
+    currentRunResults = results;
+
+    buildFrameNav(results);
+    buildSummaryTable(results);
+    showFrame(results.length - 1);   // land on the most recent frame, but every frame is now browsable
+
+    const jsonBlob = new Blob([JSON.stringify(results, null, 2)], {type:"application/json"});
+    document.getElementById('dlJson').href = URL.createObjectURL(jsonBlob);
+    document.getElementById('dlJson').setAttribute('download', `run_${runId}_results.json`);
+
+    return results;
+  }
+
+  /* hero scatter + sweep: unchanged decorative element */
+  const scatter = document.getElementById('scatterPts');
+  for(let i=0;i<140;i++){
+    const ring = Math.random();
+    const r = 20 + ring*140;
+    const density = 1 - ring;
+    if(Math.random() > density*0.5 + 0.15) continue;
+    const a = Math.random()*Math.PI*2;
+    const x = 180 + r*Math.cos(a);
+    const y = 180 + r*Math.sin(a);
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r', 1.1+Math.random()*1.3);
+    c.setAttribute('opacity', 0.25+Math.random()*0.5);
+    scatter.appendChild(c);
+  }
+  let sweepAngle = 0;
+  setInterval(()=>{
+    sweepAngle = (sweepAngle+0.6)%360;
+    document.getElementById('sweep').style.transform = `rotate(${sweepAngle}deg)`;
+  }, 30);
+</script>
+</body>
+</html>
