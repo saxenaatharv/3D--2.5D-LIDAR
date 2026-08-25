@@ -1,229 +1,267 @@
-# Adaptive Variable Resolution 2.5D Lidar Mapping — Setup & Run Guide
+# Adaptive Variable Resolution 2.5D Lidar Mapping
 DRDO / IDEX — Problem Statement 26053
 
-All commands below are typed into a **Linux (Ubuntu) terminal**, assuming
-your project folder is `~/Desktop/SIH`. The core inference pipeline only
-needs these six files in that folder:
+A foveated, human-vision-inspired 2.5D occupancy/semantic map built on top
+of a pretrained RandLA-Net (Open3D-ML) backbone. Space around the ego
+sensor is split into concentric rings, each with its own cell size —
+fine resolution near the sensor, coarser far away — so memory scales with
+what actually matters instead of a fixed uniform grid.
 
-```
-class_mapping.py
-config.yaml
-grid_engine.py
-metrics.py
-run_inference.py
-visualize_dashboard.py
-```
-
-(`finetune.py`, `dataset_utils.py`, and `generate_test_frame.py` are only
-needed if you plan to fine-tune on your own data or generate a synthetic
-smoke-test frame — see Section 6.)
+Two ways to use it:
+- **CLI pipeline** (`run_inference.py`, `finetune.py`) — desktop OpenCV dashboard.
+- **Web app** (`app.py` + `variant.html`) — browser UI, upload frames, run,
+  view results, download CSV/JSON.
 
 ---
 
-## 0. System packages
+## 1. Project structure
+
+```
+SIH/
+├── config_pretrained.yaml     <- points at the ORIGINAL Open3D-ML checkpoint
+├── config_finetuned.yaml      <- points at YOUR fine-tuned checkpoint (auto-written by finetune.py)
+├── class_mapping.py           <- SemanticKITTI 19 classes -> terrain/static/dynamic
+├── grid_engine.py             <- Variable Resolution 2.5D Grid Engine (foveated sparse grid)
+├── visualize_dashboard.py     <- live OpenCV dashboard renderer (CLI path)
+├── metrics.py                 <- IoU + memory-saving report
+├── run_inference.py           <- SCRIPT 1: pretrained/fine-tuned inference, no training
+├── dataset_utils.py           <- converts raw point clouds + labels into SemanticKITTI layout,
+│                                  with a 90/10 train/test SPLIT (see Section 5)
+├── finetune.py                <- SCRIPT 2: fine-tunes the pretrained checkpoint
+├── generate_test_frame.py     <- synthetic smoke-test frame generator
+├── requirements.txt
+├── app.py                     <- FastAPI backend for the web UI
+├── backends.py                <- pluggable model backend (real Open3D-ML model, or
+│                                  a transparent heuristic fallback if no checkpoint loads)
+├── variant.html                <- the web frontend (talks to app.py)
+├── lidar25d/                   <- Python virtual environment (created below)
+├── checkpoints/                 <- .pth files go here (pretrained + fine-tuned)
+├── data/
+│   ├── inference_frames/        <- lidar frames to run inference on
+│   ├── finetune_raw/             <- your raw point clouds + labels, before conversion
+│   └── finetune_dataset/         <- auto-populated by dataset_utils.py (sequences/00 = train, 01 = test)
+└── outputs/
+    ├── pretrained/               <- run_log.csv + dashboard PNGs from config_pretrained.yaml runs
+    └── finetuned/                <- same, from config_finetuned.yaml runs
+```
+
+---
+
+## 2. Setup (one-time)
 
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip curl unzip
-```
 
----
-
-## 1. Go to your project folder
-
-```bash
 cd ~/Desktop/SIH
-ls
-```
-
----
-
-## 2. Create and activate a virtual environment
-
-```bash
 python3 -m venv lidar25d
 source lidar25d/bin/activate
-```
-
----
-
-## 3. Install PyTorch (version-matched to Open3D-ML: 2.2.2)
-
-```bash
 pip install --upgrade pip
 
-# GPU build (NVIDIA GPU + CUDA 11.8 driver) -- fastest, recommended
+# PyTorch, version-matched to Open3D-ML (2.2.2)
+# GPU (NVIDIA + CUDA 11.8):
 pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cu118
-
-# If you do NOT have an NVIDIA GPU, use this line INSTEAD of the one above:
+# CPU only, use this line INSTEAD:
 # pip install torch==2.2.2 torchvision==0.17.2
-```
 
-If you installed the CPU build of torch, open `config.yaml` and set
-`model.device: "cpu"`.
-
----
-
-## 4. Install remaining dependencies
-
-```bash
 pip install numpy pyyaml opencv-python matplotlib "open3d>=0.17.0" tensorboard "numpy<2"
+pip install fastapi "uvicorn[standard]" python-multipart pydantic   # only needed for the web app
+
+mkdir -p checkpoints data/inference_frames data/finetune_raw outputs/pretrained outputs/finetuned
 ```
+
+If you're on CPU only, set `model.device: "cpu"` in both `config_pretrained.yaml` and
+`config_finetuned.yaml`.
 
 ---
 
-## 5. Create required folders
+## 3. Get the pretrained checkpoint
 
 ```bash
-mkdir -p checkpoints data/inference_frames outputs
+curl -L -o checkpoints/randlanet_semantickitti_202201071330utc.pth \
+  https://storage.googleapis.com/open3d-releases/model-zoo/randlanet_semantickitti_202201071330utc.pth
 ```
+
+This is a real Open3D-ML model-zoo checkpoint trained end-to-end on
+SemanticKITTI — `run_inference.py` / `finetune.py` load it via
+`pipeline.load_ckpt(...)`, never starting from random weights.
+
+`config_pretrained.yaml` already points `model.checkpoint_path` at this file.
 
 ---
 
-## 6. Get the pretrained checkpoint (real weights, trained on SemanticKITTI — not random init)
+## 4. Run INFERENCE (pretrained or fine-tuned) — CLI path
+
+Drop `.bin` (KITTI-style float32 N×4) or `.npy` (N×3/N×4) frames into
+`data/inference_frames/`, or generate a synthetic smoke-test frame:
 
 ```bash
-curl -L -o checkpoints/randlanet_semantickitti_202201071330utc.pth https://storage.googleapis.com/open3d-releases/model-zoo/randlanet_semantickitti_202201071330utc.pth
+python generate_test_frame.py
 ```
 
-(Optional, if you want to try KPConv instead of RandLA-Net):
+Then run either model — each writes to its own output folder so results
+never overwrite each other:
 
 ```bash
-curl -L -o checkpoints/kpconv_semantickitti_202009090354utc.pth https://storage.googleapis.com/open3d-releases/model-zoo/kpconv_semantickitti_202009090354utc.pth
+# pretrained weights
+python run_inference.py --config config_pretrained.yaml
+
+# your fine-tuned weights
+python run_inference.py --config config_finetuned.yaml
 ```
 
-If you switch to KPConv, edit `config.yaml`:
-```yaml
-model:
-  name: "KPFCNN"
-  checkpoint_path: "checkpoints/kpconv_semantickitti_202009090354utc.pth"
-```
-
-Both checkpoints come straight from the official Open3D-ML model zoo
-(`isl-org/Open3D-ML`) and are trained end-to-end on SemanticKITTI — real
-outdoor driving Lidar with road/building/vehicle/pedestrian classes, i.e.
-the same kind of data this project targets. `run_inference.py` (and
-`finetune.py`, if you use it) calls `pipeline.load_ckpt(...)`, so the
-network starts from these learned weights, never from random
-initialization.
-
----
-
-## 7. Add Lidar frames to run inference on
-
-You have two options:
-
-**Option A — download a small real SemanticKITTI subset (recommended for a first run):**
-
-```bash
-mkdir -p data/finetune_raw
-curl -L -o data/SemanticKittiTiny.zip https://pl-flash-data.s3.amazonaws.com/SemanticKittiTiny.zip
-unzip -o data/SemanticKittiTiny.zip -d data/finetune_raw
-
-rm -f data/inference_frames/*.bin
-cp data/finetune_raw/SemanticKittiTiny/train/00/scans/*.bin data/inference_frames/
-ls data/inference_frames/ | wc -l
-```
-
-**Option B — use your own frames.** Drop `.bin` frames (KITTI-style:
-float32, N×4 = x,y,z,intensity) or `.npy` point clouds (N×3 or N×4) into:
-
-```
-data/inference_frames/
-```
-
-(A synthetic smoke-test frame can also be generated with
-`python generate_test_frame.py`, if that script is present in your
-folder — see Section 9.)
-
----
-
-## 8. Run INFERENCE with the pretrained model
-
-```bash
-cd ~/Desktop/SIH
-source lidar25d/bin/activate
-python run_inference.py --config config.yaml
-```
-
-This will:
-- load the pretrained RandLA-Net/KPConv weights (no training happens here)
-- run semantic segmentation on every frame in `data/inference_frames`
-- remap predictions to terrain / static-obstacle / dynamic-object
-- build the variable-resolution 2.5D grid (5cm cells out to 10m, widening to
-  50cm cells out to 100m)
-- open a live OpenCV dashboard window showing the color-coded map, FPS, and
-  memory-saving percentage vs. an equivalent uniform 5cm grid
-- write `outputs/run_log.csv` with per-frame FPS / active cell count /
-  memory saving / mIoU (mIoU only populates if you set `paths.gt_label_dir`
-  in `config.yaml` to a folder of matching `.label` files)
-- save a PNG of the dashboard for every frame to `outputs/outputimage/`
+Each run:
+- loads the model checkpoint from that config's `model.checkpoint_path`
+- segments every frame, remaps to terrain / static-obstacle / dynamic-object
+- builds the variable-resolution grid and shows a live OpenCV dashboard
+- writes `outputs/<pretrained|finetuned>/run_log.csv` (fps, active cells, memory saving, mIoU)
+- saves a PNG of each frame's dashboard to `outputs/<pretrained|finetuned>/outputimage/`
 
 Press **`q`** in the dashboard window to stop early.
 
-**Check the output:**
-
 ```bash
-cat outputs/run_log.csv
-ls outputs/outputimage/
+cat outputs/pretrained/run_log.csv
+cat outputs/finetuned/run_log.csv
 ```
 
 ---
 
-## 9. (Optional) FINE-TUNE the pretrained model on your own data
+## 5. FINE-TUNE on your own data (90/10 train/test split)
 
-This step needs three extra files that aren't part of the minimal
-inference set: `finetune.py`, `dataset_utils.py`, and `requirements.txt`.
-Copy them into `~/Desktop/SIH` first.
+`finetune.py` always starts from `config_pretrained.yaml`'s checkpoint and
+**never overwrites that file**. It writes a brand-new `config_finetuned.yaml`
+pointing at the new weights, so `config_pretrained.yaml` stays a permanent,
+untouched reference no matter how many times you re-train.
 
-If your own data is just raw point clouds + a per-point label array
-(`.npy`, values 0=terrain / 1=static / 2=dynamic, or your own SemanticKITTI-style ids):
-
-```bash
-python finetune.py --config config.yaml --raw_pc_dir path/to/your/pointclouds --raw_label_dir path/to/your/labels
-```
-
-If your data is already organized in SemanticKITTI's native layout
-(`sequences/00/velodyne/*.bin`, `sequences/00/labels/*.label`), just point
-`paths.finetune_data_dir` in `config.yaml` at it and run:
+Your raw data (point clouds + a matching `.npy` label array per frame,
+values 0=terrain/1=static/2=dynamic or your own SemanticKITTI ids) gets
+split **90% train / 10% held-out test**, shuffled with a fixed seed —
+into two separate SemanticKITTI-style sequences (`sequences/00` = train,
+`sequences/01` = test), so training and evaluation never see the same
+frames:
 
 ```bash
-python finetune.py --config config.yaml
+python finetune.py \
+  --config config_pretrained.yaml \
+  --output_config config_finetuned.yaml \
+  --raw_pc_dir data/finetune_raw/pointclouds \
+  --raw_label_dir data/finetune_raw/labels \
+  --train_ratio 0.9
 ```
 
-This script:
-- loads the **same pretrained checkpoint** from `checkpoints/` as a starting
-  point (`pipeline.load_ckpt(...)`) — fine-tuning, not training from scratch
-- trains for `training.epochs` epochs (edit `config.yaml` to change
-  epochs / batch size / learning rate / how many early layers to freeze)
-- saves the adapted checkpoint under `./logs/`
+Watch for this line early in the console output to confirm the split
+actually happened:
 
-To use the fine-tuned weights afterwards, copy the new `.pth` file into
-`checkpoints/` and update `model.checkpoint_path` in `config.yaml`, then
-re-run Section 8.
+```
+[dataset_utils] Split N frames -> X train (sequence 00) / Y test (sequence 01), train_ratio=0.9, seed=42
+```
+
+Verify on disk:
+
+```bash
+ls data/finetune_dataset/sequences/00/velodyne/ | wc -l   # ~90%
+ls data/finetune_dataset/sequences/01/velodyne/ | wc -l   # ~10%
+```
+
+If your data is already in SemanticKITTI layout with `sequences/00` and
+`sequences/01` present, skip `--raw_pc_dir`/`--raw_label_dir` entirely and
+just run:
+
+```bash
+python finetune.py --config config_pretrained.yaml --output_config config_finetuned.yaml
+```
+
+Epochs / batch size / learning rate / frozen layers / split ratio are all
+editable under `training:` in `config_pretrained.yaml`.
+
+When training finishes, `config_finetuned.yaml` is written/overwritten
+automatically with the new checkpoint path — re-run Section 4's second
+command to try it out.
 
 ---
 
-## 10. Project structure
+## 6. Run the WEB APP
 
+The web app (`app.py` FastAPI backend + `variant.html` frontend) wraps the
+same pipeline behind a browser UI: upload frames, pick a checkpoint, run,
+watch progress, view the color-coded map, download `run_log.csv` /
+`results.json`.
+
+```bash
+cd ~/Desktop/SIH
+source lidar25d/bin/activate
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
 ```
-SIH/
-├── config.yaml              <- single source of truth: model, grid rings, paths, training
-├── class_mapping.py         <- SemanticKITTI 19 classes -> terrain/static/dynamic
-├── grid_engine.py           <- Variable Resolution 2.5D Grid Engine (foveated sparse grid)
-├── visualize_dashboard.py   <- live OpenCV dashboard renderer
-├── metrics.py                <- IoU + memory-saving report
-├── run_inference.py          <- SCRIPT 1: pretrained-model inference, no training
-├── dataset_utils.py          <- (optional) converts your raw data into SemanticKITTI layout
-├── finetune.py                <- (optional) SCRIPT 2: fine-tunes the pretrained checkpoint
-├── generate_test_frame.py     <- (optional) synthetic smoke-test frame generator
-├── requirements.txt           <- (optional, only needed for finetune.py's own dependency pin)
-├── lidar25d/                  <- Python virtual environment (created in Section 2)
-├── checkpoints/                <- pretrained .pth files go here
-├── data/
-│   ├── inference_frames/       <- put lidar frames here for Section 8
-│   ├── finetune_raw/            <- downloaded/extracted SemanticKittiTiny subset (Section 7)
-│   └── finetune_dataset/        <- auto-populated by dataset_utils.py, if used
-└── outputs/                     <- run_log.csv and exported dashboard PNGs land here
-    └── outputimage/
+
+Leave that running, then open `variant.html` directly in a browser
+(double-click it, or `xdg-open variant.html`).
+
+**Confirm the server is up** (optional, second terminal):
+```bash
+curl http://localhost:8000/api/health
 ```
+
+### Using a real trained model instead of the fallback
+
+The web app has a **"Pretrained checkpoint path"** text box. If you leave
+it empty, it silently uses `HeuristicBackend` — a transparent placeholder
+(height threshold, not a trained model) meant only to prove the wiring
+works when no model is loaded. It is **not** your fine-tuned model.
+
+To use your real weights:
+1. Type the checkpoint path into that box (relative to the folder you ran
+   `uvicorn` from), e.g.:
+   ```
+   checkpoints/finetuned_ckpt_00040.pth
+   ```
+   or
+   ```
+   checkpoints/randlanet_semantickitti_202201071330utc.pth
+   ```
+2. Click **"Check backend"** and confirm the badge says `backend: open3d-ml`
+   (not `heuristic-fallback`).
+3. Then run as normal — dynamic/static/terrain colors will now come from
+   the real model.
+
+If it still falls back after entering a correct path, check that
+`open3d.ml.torch` actually imports in the same venv running `uvicorn`:
+```bash
+python -c "import open3d.ml.torch as ml3d; print('ok')"
+```
+
+### API reference (for anyone extending the frontend)
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/api/frames` | upload a `.bin`/`.npy` frame |
+| GET | `/api/frames` | list uploaded frames |
+| DELETE | `/api/frames/{frame_id}` | drop a frame |
+| GET | `/api/backend/status` | which classifier is active (real model vs heuristic) |
+| POST | `/api/runs` | start a run over a set of frame ids + config |
+| GET | `/api/runs/{run_id}/status` | poll progress |
+| GET | `/api/runs/{run_id}/results` | per-frame metrics + grid cells |
+| GET | `/api/runs/{run_id}/log.csv` | run as CSV, same columns as `run_log.csv` |
+
+Frame/run data lives in memory only — fine for a demo, not for
+multi-user production (swap `FRAMES`/`RUNS` in `app.py` for Redis/a DB
+before deploying beyond a single session).
+
+---
+
+## 7. Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `ModuleNotFoundError` on run | venv not activated, or a package not installed | `source lidar25d/bin/activate`, then `pip install -r requirements.txt` |
+| `FileNotFoundError: Checkpoint not found` | `model.checkpoint_path` in the config doesn't exist on disk | `ls checkpoints/`, fix the path in the config, or re-download (Section 3) |
+| Web app shows mostly terrain / wrong colors | checkpoint path box left empty → using the heuristic fallback | see Section 6, "Using a real trained model" |
+| `config_pretrained.yaml` no longer points at the pretrained checkpoint | you're on an old copy of `finetune.py` that overwrote the input config in place | use the version in this repo — it always writes a separate `--output_config` and never touches the input config |
+| Fine-tuning trained on 100% of frames, no held-out test set | `data/finetune_dataset/sequences/` had no `01/` folder — `--raw_pc_dir`/`--raw_label_dir` weren't passed, or an old `dataset_utils.py` was used | `rm -rf data/finetune_dataset cache logs` then re-run Section 5's command with `--raw_pc_dir`/`--raw_label_dir` set |
+| No lidar frames found | `data/inference_frames/` is empty | drop `.bin`/`.npy` frames in, or `python generate_test_frame.py` for a smoke test |
+
+---
+
+## 8. Credits
+
+Pretrained checkpoints from the official Open3D-ML model zoo
+(`isl-org/Open3D-ML`), trained on SemanticKITTI.
