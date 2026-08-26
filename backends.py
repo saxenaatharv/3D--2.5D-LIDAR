@@ -29,8 +29,12 @@ class HeuristicBackend:
     terrain, deterministic hash-based split for the rest."""
     name = "heuristic-fallback"
 
-    def __init__(self, device="cpu"):
+    def __init__(self, device="cpu", note=None):
         self.device = device
+        self._note = note or (
+            "Height-based heuristic placeholder -- no learned weights. "
+            "Swap in a real checkpoint to activate Open3DMLBackend."
+        )
 
     def predict(self, xyz):
         xyz = np.asarray(xyz)
@@ -44,8 +48,7 @@ class HeuristicBackend:
         return {
             "backend": self.name,
             "is_pretrained_model": False,
-            "note": "Height-based heuristic placeholder -- no learned weights. "
-                    "Swap in a real checkpoint to activate Open3DMLBackend.",
+            "note": self._note,
         }
 
 
@@ -90,6 +93,11 @@ class Open3DMLBackend:
 
 _cache = {}
 
+# KPConv (KPFCNN) is under construction on the frontend -- the model card is
+# disabled there so this should only ever be reached via a direct API call.
+# Report that plainly instead of attempting to build/load it.
+UNDER_CONSTRUCTION_MODELS = {"KPFCNN"}
+
 
 def get_backend(model_name="RandLANet", device="cpu", checkpoint_path=None):
     """Returns a real Open3D-ML backend if it can actually be constructed;
@@ -103,6 +111,13 @@ def get_backend(model_name="RandLANet", device="cpu", checkpoint_path=None):
     (model_name, device, checkpoint_path) never changes. HeuristicBackend
     itself is trivial to construct, so there's no cost to not caching it.
     """
+    if model_name in UNDER_CONSTRUCTION_MODELS:
+        return HeuristicBackend(
+            device,
+            note=f"'{model_name}' is under construction and not available yet -- "
+                 f"using heuristic-fallback classifier instead. Use 'RandLANet'.",
+        )
+
     key = (model_name, device, checkpoint_path)
     if key in _cache:
         return _cache[key]
