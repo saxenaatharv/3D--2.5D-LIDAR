@@ -181,6 +181,9 @@
   .card-select.active .radio::after{
     content:""; position:absolute; inset:3px; border-radius:50%; background:var(--phosphor);
   }
+  .card-select.disabled{ cursor:not-allowed; opacity:0.5; }
+  .card-select.disabled:hover{ border-color:var(--border); background:var(--panel-2); }
+  .tag.tag-warn{ color:var(--amber); border-color:var(--amber); }
   .card-select p{ font-size:12px; color:var(--text-dim); margin-top:8px; }
   .tag-row{ margin-top:12px; display:flex; gap:6px; flex-wrap:wrap; }
   .tag{
@@ -410,10 +413,10 @@
           <p>Pretrained on SemanticKITTI. Faster inference, lighter memory footprint — good default for a live dashboard.</p>
           <div class="tag-row"><span class="tag">19 classes</span><span class="tag">torch</span></div>
         </div>
-        <div class="card-select" data-model="KPFCNN">
+        <div class="card-select disabled" data-model="KPFCNN" aria-disabled="true">
           <div class="top"><h4>KPConv (KPFCNN)</h4><span class="radio"></span></div>
           <p>Also pretrained on SemanticKITTI. Slightly higher accuracy, heavier compute — better suited to offline runs.</p>
-          <div class="tag-row"><span class="tag">19 classes</span><span class="tag">torch</span></div>
+          <div class="tag-row"><span class="tag">19 classes</span><span class="tag">torch</span><span class="tag tag-warn">under construction</span></div>
         </div>
       </div>
 
@@ -761,6 +764,7 @@
      ============================================================ */
   document.querySelectorAll('.card-select').forEach(card=>{
     card.addEventListener('click', ()=>{
+      if(card.classList.contains('disabled')) return; // KPConv is under construction -- not selectable
       document.querySelectorAll('.card-select').forEach(c=>c.classList.remove('active'));
       card.classList.add('active');
     });
