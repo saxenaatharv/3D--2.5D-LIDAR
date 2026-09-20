@@ -1,5 +1,0 @@
-numpy
-pyyaml
-opencv-python
-matplotlib
-open3d>=0.17.0
